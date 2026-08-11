@@ -1,58 +1,82 @@
-import {
-  doc, setDoc, getDoc, collection, addDoc, query, orderBy,
-  onSnapshot, serverTimestamp, updateDoc,
-} from 'firebase/firestore'
-import { db } from './firebase'
+import { ID, Query } from 'appwrite';
+import { client, databases, DATABASE_ID, COLLECTIONS } from './appwrite';
 
-// Deterministic chat id so two users always land on the same chat doc,
-// matching the security rule that enforces this exact format.
+// Generates a deterministic ID for 1:1 chats
 export function getChatId(uidA, uidB) {
-  return [uidA, uidB].sort().join('_')
+  return [uidA, uidB].sort().join('_');
 }
 
+// Ensures a chat document exists in the 'chats' table
 export async function ensureChat(uidA, uidB) {
-  const chatId = getChatId(uidA, uidB)
-  const chatRef = doc(db, 'chats', chatId)
-  const snap = await getDoc(chatRef)
-  if (!snap.exists()) {
-    await setDoc(chatRef, {
-      participants: [uidA, uidB].sort(),
-      lastMessage: '',
-      lastMessageTime: serverTimestamp(),
-      lastMessageSenderId: '',
-      createdAt: serverTimestamp(),
-    })
+  const chatId = getChatId(uidA, uidB);
+  try {
+    return await databases.getDocument(DATABASE_ID, COLLECTIONS.CHATS, chatId);
+  } catch (error) {
+    // If document doesn't exist (404), create it
+    return await databases.createDocument(
+      DATABASE_ID,
+      COLLECTIONS.CHATS,
+      chatId,
+      {
+        participants: [uidA, uidB],
+        lastMessage: '',
+        lastMessageTime: new Date().toISOString(),
+        lastMessageSenderId: '',
+      }
+    );
   }
-  return chatId
 }
 
+// Sends a message and updates the chat preview
 export async function sendMessage(chatId, senderId, text) {
-  const messagesRef = collection(db, 'chats', chatId, 'messages')
-  await addDoc(messagesRef, {
-    senderId,
-    text,
-    timestamp: serverTimestamp(),
-    status: 'sent',
-  })
-  await updateDoc(doc(db, 'chats', chatId), {
+  const message = await databases.createDocument(
+    DATABASE_ID,
+    COLLECTIONS.MESSAGES,
+    ID.unique(),
+    {
+      chatId,
+      senderId,
+      text,
+      status: 'sent',
+    }
+  );
+
+  await databases.updateDocument(DATABASE_ID, COLLECTIONS.CHATS, chatId, {
     lastMessage: text,
-    lastMessageTime: serverTimestamp(),
+    lastMessageTime: new Date().toISOString(),
     lastMessageSenderId: senderId,
-  })
+  });
+
+  return message;
 }
 
-// Subscribes to messages in real time. Call the returned function to unsubscribe.
+// Subscribes to real-time message updates for a chat
 export function listenToMessages(chatId, callback) {
-  const messagesRef = collection(db, 'chats', chatId, 'messages')
-  const q = query(messagesRef, orderBy('timestamp', 'asc'))
-  return onSnapshot(q, (snapshot) => {
-    const messages = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
-    callback(messages)
-  })
-}
+  // 1. Initial fetch of existing messages
+  databases
+    .listDocuments(DATABASE_ID, COLLECTIONS.MESSAGES, [
+      Query.equal('chatId', chatId),
+      Query.orderAsc('$createdAt'),
+    ])
+    .then((response) => {
+      callback(response.documents);
+    });
 
-export async function markMessageRead(chatId, messageId) {
-  await updateDoc(doc(db, 'chats', chatId, 'messages', messageId), {
-    status: 'read',
-  })
+  // 2. Real-time WebSocket subscription for new incoming messages
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.MESSAGES}.documents`;
+  const unsubscribe = client.subscribe(channel, (response) => {
+    if (
+      response.events.includes('databases.*.collections.*.documents.*.create') &&
+      response.payload.chatId === chatId
+    ) {
+      databases
+        .listDocuments(DATABASE_ID, COLLECTIONS.MESSAGES, [
+          Query.equal('chatId', chatId),
+          Query.orderAsc('$createdAt'),
+        ])
+        .then((res) => callback(res.documents));
+    }
+  });
+
+  return unsubscribe;
 }
