@@ -10,6 +10,9 @@ export default function NewChat({ currentUser }) {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
+  // Safely get user ID for Appwrite ($id) or fallback to Firebase (uid) just in case
+  const currentUserId = currentUser.$id || currentUser.uid
+
   async function handleSearch(e) {
     e.preventDefault()
     setError('')
@@ -23,7 +26,9 @@ export default function NewChat({ currentUser }) {
         setError('No MyTripRaja user found with that email')
         return
       }
-      if (user.uid === currentUser.uid) {
+      
+      const targetUserId = user.$id || user.uid
+      if (targetUserId === currentUserId) {
         setError("That's your own account — enter someone else's email")
         return
       }
@@ -39,7 +44,8 @@ export default function NewChat({ currentUser }) {
     if (!result) return
     setLoading(true)
     try {
-      const chatId = await ensureChat(currentUser.uid, result.uid)
+      const targetUserId = result.$id || result.uid
+      const chatId = await ensureChat(currentUserId, targetUserId)
       navigate(`/chat/${chatId}`)
     } catch {
       setError('Could not start chat — try again')
@@ -82,11 +88,11 @@ export default function NewChat({ currentUser }) {
         {result && (
           <div className="border border-gray-200 rounded-xl p-4 flex items-center gap-4 bg-white shadow-sm">
             <div className="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold shrink-0">
-              {(result.displayName || '?').charAt(0).toUpperCase()}
+              {(result.displayName || result.name || '?').charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
               <p className="font-medium text-gray-900 truncate">
-                {result.displayName || 'Unknown user'}
+                {result.displayName || result.name || 'Unknown user'}
               </p>
               <p className="text-sm text-gray-500 truncate">{result.email}</p>
             </div>

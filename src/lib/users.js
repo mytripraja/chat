@@ -1,19 +1,57 @@
-import { collection, query, where, getDocs, doc, getDoc, limit } from 'firebase/firestore'
-import { db } from './firebase'
+import { ID, Query } from 'appwrite';
+import { account, databases, DATABASE_ID } from './appwrite';
 
-// Adjust the field name/collection here if your existing MyTripRaja `users` collection
-// uses different field names — this assumes `email` and `displayName` fields exist.
-export async function findUserByEmail(email) {
-  const usersRef = collection(db, 'users')
-  const q = query(usersRef, where('email', '==', email.trim().toLowerCase()), limit(1))
-  const snap = await getDocs(q)
-  if (snap.empty) return null
-  const d = snap.docs[0]
-  return { uid: d.id, ...d.data() }
+// Get currently logged-in user session
+export async function getCurrentUser() {
+  try {
+    return await account.get();
+  } catch (error) {
+    return null; // Not logged in
+  }
 }
 
-export async function getUserProfile(uid) {
-  const snap = await getDoc(doc(db, 'users', uid))
-  if (!snap.exists()) return null
-  return { uid: snap.id, ...snap.data() }
+// Anonymous / Guest Login for quick access
+export async function loginAnonymously() {
+  try {
+    await account.createAnonymousSession();
+    return await account.get();
+  } catch (error) {
+    console.error('Login failed:', error);
+    throw error;
+  }
+}
+
+// Logout session
+export async function logoutUser() {
+  try {
+    await account.deleteSession('current');
+  } catch (error) {
+    console.error('Logout failed:', error);
+  }
+}
+
+// Fetch a user profile by ID (Used in ChatThread)
+export async function getUserProfile(userId) {
+  try {
+    // Queries a hypothetical 'users' collection. 
+    return await databases.getDocument(DATABASE_ID, 'users', userId);
+  } catch (error) {
+    // Fallback if the collection isn't set up yet so the app doesn't crash
+    return { $id: userId, uid: userId, displayName: 'Unknown User' };
+  }
+}
+
+// Search for a user by email (Used in NewChat)
+export async function findUserByEmail(email) {
+  try {
+    const response = await databases.listDocuments(
+      DATABASE_ID,
+      'users',
+      [Query.equal('email', email), Query.limit(1)]
+    );
+    return response.documents.length > 0 ? response.documents[0] : null;
+  } catch (error) {
+    console.error('Error finding user:', error);
+    return null;
+  }
 }

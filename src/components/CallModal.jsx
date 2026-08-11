@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { doc, onSnapshot } from 'firebase/firestore'
-import { db } from '../lib/firebase'
+import { client, databases, DATABASE_ID } from '../lib/appwrite'
 import { startCall, answerCall, endCall } from '../lib/webrtc'
+
+const CALLS_COLLECTION = 'calls'; // Appwrite collection ID
 
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
@@ -88,7 +89,7 @@ export default function CallModal({
   onClose,
 }) {
   const isIncoming = mode === 'incoming'
-  const initialCallId = call?.id || null
+  const initialCallId = call?.id || call?.$id || null
 
   const [callId, setCallId] = useState(initialCallId)
   const [status, setStatus] = useState(isIncoming ? 'ringing' : 'connecting')
@@ -104,7 +105,7 @@ export default function CallModal({
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
 
-  const peerName = peerUser?.displayName || 'Unknown'
+  const peerName = peerUser?.displayName || peerUser?.name || 'Unknown'
 
   // Start the call when mounted as the caller.
   useEffect(() => {
@@ -112,7 +113,7 @@ export default function CallModal({
     let cancelled = false
     startCall({
       callerId: currentUserUid,
-      calleeId: peerUser?.uid,
+      calleeId: peerUser?.$id || peerUser?.uid,
       chatId,
       type,
       onLocalStream: (s) => { if (!cancelled) setLocalStream(s) },
@@ -134,14 +135,22 @@ export default function CallModal({
   // Keep the modal in sync with the call document (caller hangs up, answer, etc.).
   useEffect(() => {
     if (!callId) return
-    const callRef = doc(db, 'calls', callId)
-    const unsub = onSnapshot(callRef, (snap) => {
-      const data = snap.data()
+    
+    // Initial fetch
+    databases.getDocument(DATABASE_ID, CALLS_COLLECTION, callId).then(data => {
+      if (data.status === 'active') setStatus('active')
+      else if (TERMINAL_STATUSES.includes(data.status)) setStatus(data.status)
+    }).catch(() => {})
+
+    // Real-time subscription
+    const channel = `databases.${DATABASE_ID}.collections.${CALLS_COLLECTION}.documents.${callId}`;
+    const unsub = client.subscribe(channel, (snap) => {
+      const data = snap.payload
       if (!data) return
       if (data.status === 'active') setStatus('active')
       else if (TERMINAL_STATUSES.includes(data.status)) setStatus(data.status)
     })
-    return unsub
+    return () => unsub()
   }, [callId])
 
   // Attach media streams to the DOM elements.
@@ -392,7 +401,7 @@ export default function CallModal({
       )}
 
       {/* TERMINAL / ERROR */}
-      {(TERMINAL_STATUSES.includes(status) || status === 'error') && (
+      {((TERMINAL_STATUSES.includes(status) || status === 'error') && (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <IconPhoneOff className="w-10 h-10 text-gray-500" />
           <p className="text-lg">
@@ -414,7 +423,7 @@ export default function CallModal({
             </button>
           )}
         </div>
-      )}
+      ))}
     </div>
   )
 }

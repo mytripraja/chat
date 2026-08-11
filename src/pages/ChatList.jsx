@@ -1,68 +1,53 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { listenToChats } from '../lib/chats'
-import { getUserProfile } from '../lib/users'
-import ChatListItem from '../components/ChatListItem'
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { listenToChats } from '../lib/chats';
+import ChatListItem from '../components/ChatListItem';
 
-export default function ChatList({ currentUser }) {
-  const [chats, setChats] = useState([])
-  const [profiles, setProfiles] = useState({}) // uid -> profile, cached
+export default function ChatList({ user }) {
+  const navigate = useNavigate();
+  const [chats, setChats] = useState([]);
 
   useEffect(() => {
-    const unsub = listenToChats(currentUser.uid, setChats)
-    return unsub
-  }, [currentUser.uid])
+    if (!user) return;
 
-  // Fetch profiles for the "other" participant in each chat, only for ones we haven't seen yet
-  useEffect(() => {
-    const missing = chats
-      .map((c) => c.participants.find((p) => p !== currentUser.uid))
-      .filter((uid) => uid && !profiles[uid])
+    const userId = user.$id || user.uid;
+    const unsubscribe = listenToChats(userId, (updatedChats) => {
+      setChats(updatedChats);
+    });
 
-    if (missing.length === 0) return
-
-    Promise.all(missing.map((uid) => getUserProfile(uid))).then((results) => {
-      setProfiles((prev) => {
-        const next = { ...prev }
-        results.forEach((p) => {
-          if (p) next[p.uid] = p
-        })
-        return next
-      })
-    })
-  }, [chats, currentUser.uid, profiles])
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [user]);
 
   return (
-    <div className="h-full flex flex-col">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <h1 className="text-lg font-semibold">Chats</h1>
-        <Link
-          to="/new"
-          className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-full font-medium"
+    <div className="flex flex-col h-screen bg-gray-900 text-white">
+      <header className="flex justify-between items-center p-4 border-b border-gray-800">
+        <h1 className="text-xl font-bold">Messages</h1>
+        <button
+          onClick={() => navigate('/new')}
+          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium"
         >
-          New chat
-        </Link>
+          + New Chat
+        </button>
       </header>
 
-      {chats.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-          No conversations yet — start one with "New chat"
-        </div>
-      ) : (
-        <div className="flex-1 overflow-y-auto">
-          {chats.map((chat) => {
-            const otherUid = chat.participants.find((p) => p !== currentUser.uid)
-            return (
-              <ChatListItem
-                key={chat.id}
-                chat={chat}
-                otherUser={profiles[otherUid]}
-                isOwnLastMessage={chat.lastMessageSenderId === currentUser.uid}
-              />
-            )
-          })}
-        </div>
-      )}
+      <div className="flex-1 overflow-y-auto divide-y divide-gray-800">
+        {chats.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            No chats yet. Start a new conversation!
+          </div>
+        ) : (
+          chats.map((chat) => (
+            <ChatListItem
+              key={chat.$id || chat.id}
+              chat={chat}
+              currentUserId={user?.$id || user?.uid}
+              onClick={() => navigate(`/chat/${chat.$id || chat.id}`)}
+            />
+          ))
+        )}
+      </div>
     </div>
-  )
+  );
 }

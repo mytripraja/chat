@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { doc, getDoc, collection, query, where, onSnapshot } from 'firebase/firestore'
-import { ref, onValue, off, set as rtdbSet } from 'firebase/database'
-import { db, rtdb } from '../lib/firebase'
+import { Query } from 'appwrite'
+import { client, databases, DATABASE_ID, COLLECTIONS } from '../lib/appwrite'
 import { listenToMessages, sendMessage, markMessageRead } from '../lib/chat'
 import { getUserProfile } from '../lib/users'
 import MessageBubble from '../components/MessageBubble'
@@ -34,100 +33,79 @@ export default function ChatThread({ currentUser }) {
   const bottomRef = useRef(null)
   const typingTimerRef = useRef(null)
 
-  // Load the chat doc and the other participant's profile.
+  const currentUserId = currentUser.$id || currentUser.uid
+
+  // Load the chat doc and the other participant's profile via Appwrite
   useEffect(() => {
     let cancelled = false
     async function loadChat() {
-      const chatSnap = await getDoc(doc(db, 'chats', chatId))
-      if (!chatSnap.exists() || cancelled) return
-      const uid = chatSnap.data().participants.find((p) => p !== currentUser.uid)
-      setOtherUid(uid)
-      const profile = await getUserProfile(uid)
-      if (!cancelled) setOtherUser(profile)
+      try {
+        const chatDoc = await databases.getDocument(DATABASE_ID, COLLECTIONS.CHATS, chatId)
+        if (cancelled) return
+        const uid = chatDoc.participants.find((p) => p !== currentUserId)
+        setOtherUid(uid)
+        const profile = await getUserProfile(uid)
+        if (!cancelled) setOtherUser(profile)
+      } catch (error) {
+        console.error('Error fetching chat details:', error)
+      }
     }
     loadChat()
     return () => { cancelled = true }
-  }, [chatId, currentUser.uid])
+  }, [chatId, currentUserId])
 
-  // Presence from Realtime Database.
-  useEffect(() => {
-    if (!otherUid) return
-    const statusRef = ref(rtdb, `status/${otherUid}`)
-    const unsub = onValue(statusRef, (snap) => {
-      const val = snap.val()
-      setOnline(!!val && val.state === 'online')
-    })
-    return () => off(statusRef, 'value')
-  }, [otherUid])
-
-  // Their typing indicator from Realtime Database.
-  useEffect(() => {
-    if (!otherUid) return
-    const typingRef = ref(rtdb, `typing/${chatId}/${otherUid}`)
-    const unsub = onValue(typingRef, (snap) => setOtherTyping(!!snap.val()))
-    return () => off(typingRef, 'value')
-  }, [chatId, otherUid])
-
-  // Clear our typing flag when leaving the thread.
-  useEffect(() => () => {
-    clearTimeout(typingTimerRef.current)
-    rtdbSet(ref(rtdb, `typing/${chatId}/${currentUser.uid}`), false).catch(() => {})
-  }, [chatId, currentUser.uid])
-
-  // Real-time message subscription.
+  // Real-time message subscription
   useEffect(() => {
     const unsub = listenToMessages(chatId, setMessages)
     return unsub
   }, [chatId])
 
-  // Auto-scroll to the newest message.
+  // Auto-scroll to the newest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Mark incoming unread messages as read.
+  // Mark incoming unread messages as read
   useEffect(() => {
     messages
-      .filter((m) => m.senderId !== currentUser.uid && m.status !== 'read')
-      .forEach((m) => markMessageRead(chatId, m.id))
-  }, [messages, chatId, currentUser.uid])
+      .filter((m) => m.senderId !== currentUserId && m.status !== 'read')
+      .forEach((m) => markMessageRead(chatId, m.$id || m.id))
+  }, [messages, chatId, currentUserId])
 
-  // Incoming call detection for this thread.
+  // Appwrite Incoming call detection for this thread
   useEffect(() => {
-    const callsRef = collection(db, 'calls')
-    const q = query(
-      callsRef,
-      where('calleeId', '==', currentUser.uid),
-      where('chatId', '==', chatId)
-    )
-    const unsub = onSnapshot(q, (snap) => {
-      snap.docs.forEach((d) => {
-        const data = d.data()
-        if (data.status === 'ringing' && data.callerId !== currentUser.uid) {
-          setIncomingCall((prev) => prev ?? { id: d.id, ...data })
+    // Note: Assuming you have a 'calls' collection. We use Realtime to listen for it.
+    const channel = `databases.${DATABASE_ID}.collections.calls.documents`;
+    const unsub = client.subscribe(channel, (response) => {
+      if (
+        response.events.includes('databases.*.collections.*.documents.*.create') ||
+        response.events.includes('databases.*.collections.*.documents.*.update')
+      ) {
+        const data = response.payload;
+        if (
+          data.calleeId === currentUserId &&
+          data.chatId === chatId &&
+          data.status === 'ringing' &&
+          data.callerId !== currentUserId
+        ) {
+          setIncomingCall({ id: data.$id, ...data });
         }
-      })
-    })
-    return unsub
-  }, [currentUser.uid, chatId])
+      }
+    });
+    return () => unsub();
+  }, [currentUserId, chatId])
 
   function handleChange(e) {
     setText(e.target.value)
-    rtdbSet(ref(rtdb, `typing/${chatId}/${currentUser.uid}`), true).catch(() => {})
-    clearTimeout(typingTimerRef.current)
-    typingTimerRef.current = setTimeout(() => {
-      rtdbSet(ref(rtdb, `typing/${chatId}/${currentUser.uid}`), false).catch(() => {})
-    }, 1000)
+    // Note: Keystroke RTDB syncing is disabled for Appwrite to prevent rate limiting
   }
 
   async function handleSend(e) {
     e.preventDefault()
     const trimmed = text.trim()
     if (!trimmed) return
-    rtdbSet(ref(rtdb, `typing/${chatId}/${currentUser.uid}`), false).catch(() => {})
-    clearTimeout(typingTimerRef.current)
     setText('')
-    await sendMessage(chatId, currentUser.uid, trimmed)
+    await sendMessage(chatId, currentUserId, trimmed)
   }
 
   function handleStartCall(type) {
@@ -144,11 +122,11 @@ export default function ChatThread({ currentUser }) {
           Back
         </Link>
         <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold shrink-0">
-          {(otherUser?.displayName || '?').charAt(0).toUpperCase()}
+          {(otherUser?.displayName || otherUser?.name || '?').charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="font-semibold text-gray-900 truncate">
-            {otherUser?.displayName || '…'}
+            {otherUser?.displayName || otherUser?.name || '…'}
           </h1>
           <p className={`text-xs ${otherTyping ? 'text-blue-600' : online ? 'text-green-600' : 'text-gray-400'}`}>
             {statusLine}
@@ -176,7 +154,7 @@ export default function ChatThread({ currentUser }) {
 
       <div className="flex-1 overflow-y-auto p-4 bg-gray-100">
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} isOwn={m.senderId === currentUser.uid} />
+          <MessageBubble key={m.$id || m.id} message={m} isOwn={m.senderId === currentUserId} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -202,7 +180,7 @@ export default function ChatThread({ currentUser }) {
           type={outgoingCall.type}
           chatId={outgoingCall.chatId}
           peerUser={otherUser}
-          currentUserUid={currentUser.uid}
+          currentUserUid={currentUserId}
           onClose={() => setOutgoingCall(null)}
         />
       )}
@@ -211,7 +189,7 @@ export default function ChatThread({ currentUser }) {
           mode="incoming"
           call={incomingCall}
           peerUser={otherUser}
-          currentUserUid={currentUser.uid}
+          currentUserUid={currentUserId}
           onClose={() => setIncomingCall(null)}
         />
       )}

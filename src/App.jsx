@@ -1,44 +1,53 @@
-import { useEffect, useState } from 'react'
-import { onAuthStateChanged } from 'firebase/auth'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { auth } from './lib/firebase'
-import AuthModal from './components/AuthModal'
-import ChatList from './pages/ChatList'
-import NewChat from './pages/NewChat'
-import ChatThread from './pages/ChatThread'
+import { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { getCurrentUser, loginAnonymously } from './lib/users';
+import ChatList from './pages/ChatList';
+import ChatThread from './pages/ChatThread';
+import NewChat from './pages/NewChat';
 
-export default function App() {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
+function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u)
-      setLoading(false)
-    })
-    return unsub
-  }, [])
+    // Check for existing Appwrite session or initiate guest login
+    getCurrentUser()
+      .then((currentUser) => {
+        if (currentUser) {
+          setUser(currentUser);
+          setLoading(false);
+        } else {
+          return loginAnonymously().then((newUser) => {
+            setUser(newUser);
+            setLoading(false);
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('Auth initialization error:', err);
+        setLoading(false);
+      });
+  }, []);
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
-        Loading…
+      <div className="flex h-screen items-center justify-center bg-gray-900 text-white">
+        <p className="text-lg">Connecting to Chat...</p>
       </div>
-    )
-  }
-
-  if (!user) {
-    return <AuthModal />
+    );
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<ChatList currentUser={user} />} />
-        <Route path="/new" element={<NewChat currentUser={user} />} />
-        <Route path="/chat/:chatId" element={<ChatThread currentUser={user} />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
-  )
+    <Router>
+      <div className="min-h-screen bg-gray-900 text-white">
+        <Routes>
+          <Route path="/" element={user ? <ChatList user={user} /> : <Navigate to="/" />} />
+          <Route path="/chat/:chatId" element={<ChatThread user={user} />} />
+          <Route path="/new" element={<NewChat user={user} />} />
+        </Routes>
+      </div>
+    </Router>
+  );
 }
+
+export default App;

@@ -80,3 +80,16 @@ export function listenToMessages(chatId, callback) {
 
   return unsubscribe;
 }
+// Marks a specific message as read
+export async function markMessageRead(chatId, messageId) {
+  try {
+    await databases.updateDocument(
+      DATABASE_ID, 
+      COLLECTIONS.MESSAGES, 
+      messageId, 
+      { status: 'read' }
+    );
+  } catch (error) {
+    console.error('Failed to mark message read:', error);
+  }
+}
