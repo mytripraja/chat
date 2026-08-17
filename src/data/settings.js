@@ -1,0 +1,46 @@
+export const DEFAULT_SETTINGS = {
+  brand: {
+    name: 'JAA FOODS',
+    tagline: 'Refreshing Moments. Delicious Flavours.',
+    description: 'Quality refreshments made for every moment.',
+    phone: '9360940229',
+    fssai: '22426582000213',
+  },
+  payment: {
+    codEnabled: true,
+    upiEnabled: true,
+    upiId: 'jaafoods@upi',
+    upiQrCode: '',
+    bankEnabled: true,
+    bankName: 'State Bank of India',
+    accountHolder: 'JAA FOODS',
+    accountNumber: 'XXXXXXXXXXXX',
+    ifscCode: 'SBIN0000000',
+    bankBranch: 'Main Branch',
+    razorpayEnabled: false,
+    razorpayKeyId: '',
+    razorpayKeySecret: '',
+    razorpayExtraChargePercent: 2.5,
+  },
+  whatsapp: {
+    enabled: false,
+    apiKey: '',
+    phoneNumber: '919360940229',
+  },
+  email: {
+    enabled: false,
+    service: 'emailjs',
+    apiKey: '',
+    templateId: '',
+    serviceId: '',
+  },
+  shipping: {
+    freeShippingAbove: 500,
+    defaultShipping: 50,
+  },
+  social: {
+    youtube: '',
+    instagram: '',
+    facebook: '',
+  },
+};
